@@ -1,0 +1,257 @@
+name: ATP Tennis Monitor
+
+on:
+  workflow_dispatch: # Allows manual trigger and API trigger
+
+jobs:
+  check-tennis:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Check for tennis matches
+      run: |
+        # Get today's date in Eastern Time (YYYYMMDD format)
+        TODAY=$(TZ='America/New_York' date +%Y%m%d)
+        
+        # Fetch ESPN tennis scoreboard data
+        response=$(curl -s "https://site.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard?dates=$TODAY")
+        
+        # Save to file for processing
+        echo "$response" > matches.json
+        
+        # Create state file if it doesn't exist
+        touch alerted_matches.txt
+        
+        # Create Python script to process data
+        cat << 'EOF' > check_tennis.py
+        import json
+        import os
+        import urllib.request
+        import urllib.parse
+        from datetime import datetime
+        
+        # Read the matches data
+        with open('matches.json', 'r') as f:
+            data = json.load(f)
+        
+        # Read previously alerted matches
+        alerted_matches = set()
+        try:
+            with open('alerted_matches.txt', 'r') as f:
+                content = f.read().strip()
+                if content:
+                    alerted_matches = set(content.split(','))
+        except:
+            pass
+        
+        # Get current date for daily reset
+        current_date = datetime.now().strftime('%Y%m%d')
+        
+        # Filter out old alerts (from previous days)
+        alerted_matches = {m for m in alerted_matches if m.startswith(current_date)}
+        
+        # Check for matches starting soon and matches in 3rd set
+        starting_soon_matches = []
+        third_set_matches = []
+        
+        # Debug output
+        print(f"\n📊 API Response Summary:")
+        print(f"Total matches found: {len(data.get('events', []))}")
+        
+        if data.get('events'):
+            print(f"\nAll matches in response:")
+            for event in data['events']:
+                competition = event['competitions'][0]
+                status_detail = competition['status']['type']['detail']
+                
+                competitors = competition['competitors']
+                if len(competitors) >= 2:
+                    player1 = competitors[0]['athlete']['displayName']
+                    player2 = competitors[1]['athlete']['displayName']
+                    print(f"  - {player1} vs {player2} [{status_detail}]")
+        
+        if 'events' in data and data['events']:
+            for event in data['events']:
+                match_id = event['id']
+                competition = event['competitions'][0]
+                status = competition['status']['type']['name']
+                status_detail = competition['status']['type']['detail']
+                match_date = competition['date']
+                
+                competitors = competition['competitors']
+                if len(competitors) < 2:
+                    continue
+                
+                player1 = competitors[0]['athlete']['displayName']
+                player2 = competitors[1]['athlete']['displayName']
+                
+                # Create unique daily keys for different alert types
+                starting_key = f"{current_date}_{match_id}_starting"
+                third_set_key = f"{current_date}_{match_id}_thirdset"
+                
+                # Check for matches starting soon (within 20 minutes)
+                is_scheduled = status == 'STATUS_SCHEDULED'
+                within_alert_window = False
+                minutes_until = 0
+                
+                if match_date and is_scheduled:
+                    try:
+                        from datetime import datetime, timezone
+                        match_start = datetime.fromisoformat(match_date.replace('Z', '+00:00'))
+                        current_time_utc = datetime.now(timezone.utc)
+                        time_until_match = match_start - current_time_utc
+                        minutes_until = int(time_until_match.total_seconds() / 60)
+                        within_alert_window = 0 <= minutes_until <= 20
+                    except:
+                        pass
+                
+                if is_scheduled and within_alert_window and starting_key not in alerted_matches:
+                    match_info = {
+                        'id': match_id,
+                        'key': starting_key,
+                        'player1': player1,
+                        'player2': player2,
+                        'minutes_until': minutes_until,
+                        'type': 'starting'
+                    }
+                    starting_soon_matches.append(match_info)
+                    alerted_matches.add(starting_key)
+                
+                # Check for matches in 3rd set
+                is_in_progress = status == 'STATUS_IN_PROGRESS'
+                
+                # Check if in 3rd set by looking at status detail or period
+                # Tennis typically has status like "Set 3" or similar
+                is_third_set = False
+                if is_in_progress:
+                    # Try to parse set number from status detail
+                    status_lower = status_detail.lower()
+                    if 'set 3' in status_lower or 'third set' in status_lower:
+                        is_third_set = True
+                    
+                    # Also check period (if available)
+                    period = competition['status'].get('period', 0)
+                    if period == 3:
+                        is_third_set = True
+                
+                if is_in_progress and is_third_set and third_set_key not in alerted_matches:
+                    # Get scores if available
+                    score1 = competitors[0].get('score', 'N/A')
+                    score2 = competitors[1].get('score', 'N/A')
+                    
+                    match_info = {
+                        'id': match_id,
+                        'key': third_set_key,
+                        'player1': player1,
+                        'player2': player2,
+                        'score1': score1,
+                        'score2': score2,
+                        'type': 'thirdset'
+                    }
+                    third_set_matches.append(match_info)
+                    alerted_matches.add(third_set_key)
+        
+        # Send notifications
+        webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
+        
+        all_matches = starting_soon_matches + third_set_matches
+        
+        if all_matches and webhook_url:
+            for match in all_matches:
+                if match['type'] == 'starting':
+                    # Starting soon alert
+                    slack_message = {
+                        "text": f"🎾 MATCH STARTING: {match['player1']} vs {match['player2']} in ~{match['minutes_until']} minutes",
+                        "blocks": [
+                            {
+                                "type": "header",
+                                "text": {
+                                    "type": "plain_text",
+                                    "text": "🎾 MATCH STARTING SOON",
+                                    "emoji": True
+                                }
+                            },
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": f"*{match['player1']}* vs *{match['player2']}*"
+                                }
+                            },
+                            {
+                                "type": "context",
+                                "elements": [
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": f"⏰ Starting in ~{match['minutes_until']} minutes"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                else:
+                    # 3rd set alert
+                    slack_message = {
+                        "text": f"🎾 THIRD SET: {match['player1']} vs {match['player2']}",
+                        "blocks": [
+                            {
+                                "type": "header",
+                                "text": {
+                                    "type": "plain_text",
+                                    "text": "🎾 THIRD SET",
+                                    "emoji": True
+                                }
+                            },
+                            {
+                                "type": "section",
+                                "fields": [
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": f"*{match['player1']}*\n{match['score1']}"
+                                    },
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": f"*{match['player2']}*\n{match['score2']}"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                
+                # Send to Slack
+                req = urllib.request.Request(
+                    webhook_url,
+                    data=json.dumps(slack_message).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'}
+                )
+                
+                try:
+                    with urllib.request.urlopen(req) as response:
+                        print(f"✓ Sent notification: {match['player1']} vs {match['player2']} ({match['type']})")
+                except Exception as e:
+                    print(f"✗ Error sending notification: {e}")
+        else:
+            print(f"\nNo new match alerts.")
+        
+        # Save updated alerted matches
+        with open('alerted_matches.txt', 'w') as f:
+            f.write(','.join(sorted(alerted_matches)))
+        
+        print(f"\nAlerted matches today: {len(alerted_matches)}")
+        EOF
+        
+        # Run the Python script
+        python3 check_tennis.py
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    
+    - name: Commit state file
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add alerted_matches.txt || true
+        git commit -m "Update alerted matches state [skip ci]" || true
+        git push || true
