@@ -92,8 +92,21 @@ jobs:
                 starting_key = f"{current_date}_{match_id}_starting"
                 third_set_key = f"{current_date}_{match_id}_thirdset"
                 
-                # Check for matches starting soon (within 20 minutes)
+                # Check for matches starting soon OR just started (1st set)
                 is_scheduled = status == 'STATUS_SCHEDULED'
+                is_in_progress = status == 'STATUS_IN_PROGRESS'
+                
+                # Check if just started (in 1st set)
+                is_first_set = False
+                if is_in_progress:
+                    status_lower = status_detail.lower()
+                    if 'set 1' in status_lower or 'first set' in status_lower:
+                        is_first_set = True
+                    # Also check period
+                    period = event['status'].get('period', 0)
+                    if period == 1:
+                        is_first_set = True
+                
                 within_alert_window = False
                 minutes_until = 0
                 
@@ -108,7 +121,8 @@ jobs:
                     except:
                         pass
                 
-                if is_scheduled and within_alert_window and starting_key not in alerted_matches:
+                # Alert if scheduled and starting soon OR if in progress and in 1st set
+                if ((is_scheduled and within_alert_window) or (is_in_progress and is_first_set)) and starting_key not in alerted_matches:
                     match_info = {
                         'id': match_id,
                         'key': starting_key,
@@ -162,15 +176,22 @@ jobs:
         if all_matches and webhook_url:
             for match in all_matches:
                 if match['type'] == 'starting':
-                    # Starting soon alert
+                    # Starting soon or just started alert
+                    if match.get('minutes_until', 0) > 0:
+                        alert_text = f"🎾 MATCH STARTING: {match['player1']} vs {match['player2']} in ~{match['minutes_until']} minutes"
+                        context_text = f"⏰ Starting in ~{match['minutes_until']} minutes"
+                    else:
+                        alert_text = f"🎾 MATCH STARTED: {match['player1']} vs {match['player2']} (1st set in progress)"
+                        context_text = "▶️ Match just started - 1st set in progress"
+                    
                     slack_message = {
-                        "text": f"🎾 MATCH STARTING: {match['player1']} vs {match['player2']} in ~{match['minutes_until']} minutes",
+                        "text": alert_text,
                         "blocks": [
                             {
                                 "type": "header",
                                 "text": {
                                     "type": "plain_text",
-                                    "text": "🎾 MATCH STARTING SOON",
+                                    "text": "🎾 MATCH STARTING" if match.get('minutes_until', 0) > 0 else "🎾 MATCH STARTED",
                                     "emoji": True
                                 }
                             },
@@ -186,7 +207,7 @@ jobs:
                                 "elements": [
                                     {
                                         "type": "mrkdwn",
-                                        "text": f"⏰ Starting in ~{match['minutes_until']} minutes"
+                                        "text": context_text
                                     }
                                 ]
                             }
