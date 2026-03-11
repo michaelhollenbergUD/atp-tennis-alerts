@@ -61,6 +61,46 @@ jobs:
         print(f"\n📊 API Response Summary:")
         print(f"Total matches found: {len(data.get('events', []))}")
         
+        # 🧪 TEST MODE - Send a test alert
+        print("\n🧪 TEST MODE: Sending test alert...")
+        webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
+        if webhook_url:
+            test_message = {
+                "text": "🧪 TEST: Tennis bot is working!",
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "🧪 TEST - 🎾 MATCH STARTING SOON",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "*Rafael Nadal* vs *Roger Federer*"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [
+                            {
+                                "type": "mrkdwn",
+                                "text": "⏰ Starting in ~10 minutes (TEST ALERT)"
+                            }
+                        ]
+                    }
+                ]
+            }
+            req = urllib.request.Request(webhook_url, data=json.dumps(test_message).encode('utf-8'), headers={'Content-Type': 'application/json'})
+            try:
+                with urllib.request.urlopen(req) as response:
+                    print("✓ Test alert sent to Slack!")
+            except Exception as e:
+                print(f"✗ Error sending test alert: {e}")
+        
         if data.get('events'):
             print(f"\nAll matches in response:")
             for event in data['events']:
