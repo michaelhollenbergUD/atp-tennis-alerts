@@ -65,26 +65,25 @@ jobs:
             print(f"\nAll matches in response:")
             for idx, event in enumerate(data['events']):
                 try:
-                    print(f"\n  Match {idx + 1} raw structure:")
-                    print(f"    Keys in event: {list(event.keys())}")
-                    
-                    # Tennis API structure is different - competitors are at event level
+                    # Tennis API uses 'name' field for match info (e.g., "Player A vs Player B")
+                    match_name = event.get('name', '')
+                    short_name = event.get('shortName', '')
                     status = event['status']['type']['name']
                     status_detail = event['status']['type']['detail']
                     period = event['status'].get('period', 0)
                     
-                    competitors = event.get('competitors', [])
-                    print(f"    Competitors found: {len(competitors)}")
-                    
-                    if len(competitors) >= 2:
-                        player1 = competitors[0]['athlete']['displayName']
-                        player2 = competitors[1]['athlete']['displayName']
-                        print(f"  ✓ {player1} vs {player2} [{status_detail}] (Status: {status}, Period: {period})")
+                    # Parse player names from the name field
+                    if ' vs ' in match_name:
+                        players = match_name.split(' vs ')
+                        if len(players) == 2:
+                            player1 = players[0].strip()
+                            player2 = players[1].strip()
+                            print(f"  ✓ {player1} vs {player2} [{status_detail}] (Status: {status}, Period: {period})")
+                        else:
+                            print(f"  ✗ Could not parse players from: {match_name}")
                     else:
-                        print(f"    competitors key exists: {'competitors' in event}")
-                        if 'competitors' in event:
-                            print(f"    competitors content: {event.get('competitors')}")
-                        print(f"  ✗ Match found but missing competitor data")
+                        print(f"  ✗ Match name format unexpected: {match_name}")
+                        
                 except Exception as e:
                     print(f"  ✗ Error parsing match: {e}")
                     import traceback
@@ -93,14 +92,61 @@ jobs:
         if 'events' in data and data['events']:
             for event in data['events']:
                 match_id = event['id']
+                match_name = event.get('name', '')
+                
+                # Parse player names from match name
+                if ' vs ' not in match_name:
+                    continue
+                    
+                players = match_name.split(' vs ')
+                if len(players) != 2:
+                    continue
+                    
+                player1 = players[0].strip()
+                player2 = players[1].strip()
+                
                 # Tennis doesn't use 'competitions' - data is at event level
                 status = event['status']['type']['name']
                 status_detail = event['status']['type']['detail']
                 match_date = event.get('date')
                 
-                competitors = event.get('competitors', [])
+                # Create unique daily keys for different alert types
+                starting_key = f"{current_date}_{match_id}_starting"
+                third_set_key = f"{current_date}_{match_id}_thirdset"
+                
+                # Check for matches starting soon OR just started (1st set)
+                is_scheduled = status == 'STATUS_SCHEDULED'
+                is_in_progress = status == 'STATUS_IN_PROGRESS'
+                
+                # Check if just started (in 1st set)
+                is_first_set = False
+                if is_in_progress:
+                    status_lower = status_detail.lower()
+                    if 'set 1' in status_lower or 'first set' in status_lower:
+                        is_first_set = True
+                    # Also check period
+                    period = event['status'].get('period', 0)
+                    if period == 1:
+                        is_first_set = True
+                
+                within_alert_window = False
+                minutes_until = 0
+                
+                if match_date and is_scheduled:
+                    try:
+                        from datetime import datetime, timezone
+                        match_start = datetime.fromisoformat(match_date.replace('Z', '+00:00'))
+                        current_time_utc = datetime.now(timezone.utc)
+                        time_until_match = match_start - current_time_utc
+                        minutes_until = int(time_until_match.total_seconds() / 60)
+                        within_alert_window = 0 <= minutes_until <= 20
+                    except:
+                        pass
                 if len(competitors) < 2:
                     continue
+                
+                player1 = competitors[0]['athlete']['displayName']
+                player2 = competitors[1]['athlete']['displayName']
                 
                 player1 = competitors[0]['athlete']['displayName']
                 player2 = competitors[1]['athlete']['displayName']
