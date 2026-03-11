@@ -65,13 +65,15 @@ jobs:
             print(f"\nAll matches in response:")
             for event in data['events']:
                 # Tennis API structure is different - competitors are at event level
+                status = event['status']['type']['name']
                 status_detail = event['status']['type']['detail']
+                period = event['status'].get('period', 0)
                 
                 competitors = event.get('competitors', [])
                 if len(competitors) >= 2:
                     player1 = competitors[0]['athlete']['displayName']
                     player2 = competitors[1]['athlete']['displayName']
-                    print(f"  - {player1} vs {player2} [{status_detail}]")
+                    print(f"  - {player1} vs {player2} [{status_detail}] (Status: {status}, Period: {period})")
         
         if 'events' in data and data['events']:
             for event in data['events']:
