@@ -13,11 +13,12 @@ jobs:
       
     - name: Check for tennis matches
       run: |
-        # Get today's date in Eastern Time (YYYYMMDD format)
-        TODAY=$(TZ='America/New_York' date +%Y%m%d)
+        # Get today's date
+        TODAY=$(date +%Y-%m-%d)
         
-        # Fetch ESPN tennis scoreboard data
-        response=$(curl -s "https://site.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard?dates=$TODAY")
+        # Fetch SofaScore tennis events for today
+        # SofaScore API endpoint for tennis events
+        response=$(curl -s "https://www.sofascore.com/api/v1/sport/tennis/scheduled-events/$TODAY")
         
         # Save to file for processing
         echo "$response" > matches.json
@@ -31,7 +32,7 @@ jobs:
         import os
         import urllib.request
         import urllib.parse
-        from datetime import datetime
+        from datetime import datetime, timezone
         
         # Read the matches data
         with open('matches.json', 'r') as f:
@@ -59,174 +60,89 @@ jobs:
         
         # Debug output
         print(f"\n📊 API Response Summary:")
-        print(f"Total matches found: {len(data.get('events', []))}")
-        
-        if data.get('events'):
-            print(f"\nAll matches in response:")
-            for idx, event in enumerate(data['events']):
-                try:
-                    # Show all string fields that might have player names
-                    match_name = event.get('name', '')
-                    short_name = event.get('shortName', '')
-                    status = event['status']['type']['name']
-                    status_detail = event['status']['type']['detail']
-                    period = event['status'].get('period', 0)
-                    
-                    print(f"\n  Match {idx + 1}:")
-                    print(f"    name: {match_name}")
-                    print(f"    shortName: {short_name}")
-                    print(f"    status: {status}")
-                    print(f"    status_detail: {status_detail}")
-                    print(f"    period: {period}")
-                    
-                    # Check if there's a competitions array (like basketball)
-                    if 'competitions' in event:
-                        print(f"    HAS competitions array!")
-                        
-                except Exception as e:
-                    print(f"  ✗ Error parsing match: {e}")
+        print(f"Total events found: {len(data.get('events', []))}")
         
         if 'events' in data and data['events']:
+            # Filter for ATP Men's Singles matches only
+            atp_matches = []
             for event in data['events']:
-                match_id = event['id']
-                match_name = event.get('name', '')
+                tournament = event.get('tournament', {})
+                category = tournament.get('category', {})
                 
-                # Parse player names from match name
-                if ' vs ' not in match_name:
-                    continue
+                # Check if it's ATP (not WTA, not doubles)
+                if category.get('slug') == 'atp-singles':
+                    atp_matches.append(event)
+            
+            print(f"ATP Singles matches found: {len(atp_matches)}")
+            
+            for event in atp_matches:
+                try:
+                    match_id = str(event['id'])
+                    home_team = event.get('homeTeam', {})
+                    away_team = event.get('awayTeam', {})
                     
-                players = match_name.split(' vs ')
-                if len(players) != 2:
-                    continue
+                    player1 = home_team.get('name', 'Unknown')
+                    player2 = away_team.get('name', 'Unknown')
                     
-                player1 = players[0].strip()
-                player2 = players[1].strip()
-                
-                # Tennis doesn't use 'competitions' - data is at event level
-                status = event['status']['type']['name']
-                status_detail = event['status']['type']['detail']
-                match_date = event.get('date')
-                
-                # Create unique daily keys for different alert types
-                starting_key = f"{current_date}_{match_id}_starting"
-                third_set_key = f"{current_date}_{match_id}_thirdset"
-                
-                # Check for matches starting soon OR just started (1st set)
-                is_scheduled = status == 'STATUS_SCHEDULED'
-                is_in_progress = status == 'STATUS_IN_PROGRESS'
-                
-                # Check if just started (in 1st set)
-                is_first_set = False
-                if is_in_progress:
-                    status_lower = status_detail.lower()
-                    if 'set 1' in status_lower or 'first set' in status_lower:
-                        is_first_set = True
-                    # Also check period
-                    period = event['status'].get('period', 0)
-                    if period == 1:
-                        is_first_set = True
-                
-                within_alert_window = False
-                minutes_until = 0
-                
-                if match_date and is_scheduled:
-                    try:
-                        from datetime import datetime, timezone
-                        match_start = datetime.fromisoformat(match_date.replace('Z', '+00:00'))
-                        current_time_utc = datetime.now(timezone.utc)
-                        time_until_match = match_start - current_time_utc
-                        minutes_until = int(time_until_match.total_seconds() / 60)
-                        within_alert_window = 0 <= minutes_until <= 20
-                    except:
-                        pass
-                if len(competitors) < 2:
-                    continue
-                
-                player1 = competitors[0]['athlete']['displayName']
-                player2 = competitors[1]['athlete']['displayName']
-                
-                player1 = competitors[0]['athlete']['displayName']
-                player2 = competitors[1]['athlete']['displayName']
-                
-                # Create unique daily keys for different alert types
-                starting_key = f"{current_date}_{match_id}_starting"
-                third_set_key = f"{current_date}_{match_id}_thirdset"
-                
-                # Check for matches starting soon OR just started (1st set)
-                is_scheduled = status == 'STATUS_SCHEDULED'
-                is_in_progress = status == 'STATUS_IN_PROGRESS'
-                
-                # Check if just started (in 1st set)
-                is_first_set = False
-                if is_in_progress:
-                    status_lower = status_detail.lower()
-                    if 'set 1' in status_lower or 'first set' in status_lower:
-                        is_first_set = True
-                    # Also check period
-                    period = event['status'].get('period', 0)
-                    if period == 1:
-                        is_first_set = True
-                
-                within_alert_window = False
-                minutes_until = 0
-                
-                if match_date and is_scheduled:
-                    try:
-                        from datetime import datetime, timezone
-                        match_start = datetime.fromisoformat(match_date.replace('Z', '+00:00'))
-                        current_time_utc = datetime.now(timezone.utc)
-                        time_until_match = match_start - current_time_utc
-                        minutes_until = int(time_until_match.total_seconds() / 60)
-                        within_alert_window = 0 <= minutes_until <= 20
-                    except:
-                        pass
-                
-                # Alert if scheduled and starting soon OR if in progress and in 1st set
-                if ((is_scheduled and within_alert_window) or (is_in_progress and is_first_set)) and starting_key not in alerted_matches:
-                    match_info = {
-                        'id': match_id,
-                        'key': starting_key,
-                        'player1': player1,
-                        'player2': player2,
-                        'minutes_until': minutes_until,
-                        'type': 'starting'
-                    }
-                    starting_soon_matches.append(match_info)
-                    alerted_matches.add(starting_key)
-                
-                # Check for matches in 3rd set
-                is_in_progress = status == 'STATUS_IN_PROGRESS'
-                
-                # Check if in 3rd set by looking at status detail or period
-                # Tennis typically has status like "Set 3" or similar
-                is_third_set = False
-                if is_in_progress:
-                    # Try to parse set number from status detail
-                    status_lower = status_detail.lower()
-                    if 'set 3' in status_lower or 'third set' in status_lower:
-                        is_third_set = True
+                    status = event.get('status', {})
+                    status_code = status.get('code', 0)
+                    status_type = status.get('type', '')
                     
-                    # Also check period (if available)
-                    period = event['status'].get('period', 0)
-                    if period == 3:
-                        is_third_set = True
-                
-                if is_in_progress and is_third_set and third_set_key not in alerted_matches:
-                    # Get scores if available
-                    score1 = competitors[0].get('score', 'N/A')
-                    score2 = competitors[1].get('score', 'N/A')
+                    # Status codes: 0=not started, 6=1st set, 7=2nd set, 8=3rd set, 100=finished
+                    # Get start time
+                    start_timestamp = event.get('startTimestamp', 0)
                     
-                    match_info = {
-                        'id': match_id,
-                        'key': third_set_key,
-                        'player1': player1,
-                        'player2': player2,
-                        'score1': score1,
-                        'score2': score2,
-                        'type': 'thirdset'
-                    }
-                    third_set_matches.append(match_info)
-                    alerted_matches.add(third_set_key)
+                    print(f"\n  {player1} vs {player2}")
+                    print(f"    Status: {status_type} (code: {status_code})")
+                    
+                    # Create unique daily keys
+                    starting_key = f"{current_date}_{match_id}_starting"
+                    third_set_key = f"{current_date}_{match_id}_thirdset"
+                    
+                    # Check for matches starting soon (status 0 = not started)
+                    if status_code == 0 and start_timestamp > 0 and starting_key not in alerted_matches:
+                        current_time = datetime.now(timezone.utc).timestamp()
+                        minutes_until = int((start_timestamp - current_time) / 60)
+                        
+                        # Alert if starting in 0-20 minutes
+                        if 0 <= minutes_until <= 20:
+                            match_info = {
+                                'id': match_id,
+                                'key': starting_key,
+                                'player1': player1,
+                                'player2': player2,
+                                'minutes_until': minutes_until,
+                                'type': 'starting'
+                            }
+                            starting_soon_matches.append(match_info)
+                            alerted_matches.add(starting_key)
+                            print(f"    → Starting soon alert queued")
+                    
+                    # Check for matches in 3rd set (status 6=1st set, 7=2nd set, 8=3rd set)
+                    # Also check if status_type is "inprogress" and we're in set 3
+                    if status_code == 8 and third_set_key not in alerted_matches:
+                        # Get scores
+                        home_score = event.get('homeScore', {})
+                        away_score = event.get('awayScore', {})
+                        
+                        score1 = home_score.get('display', 'N/A')
+                        score2 = away_score.get('display', 'N/A')
+                        
+                        match_info = {
+                            'id': match_id,
+                            'key': third_set_key,
+                            'player1': player1,
+                            'player2': player2,
+                            'score1': score1,
+                            'score2': score2,
+                            'type': 'thirdset'
+                        }
+                        third_set_matches.append(match_info)
+                        alerted_matches.add(third_set_key)
+                        print(f"    → Third set alert queued")
+                        
+                except Exception as e:
+                    print(f"  Error processing match: {e}")
         
         # Send notifications
         webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
@@ -236,22 +152,15 @@ jobs:
         if all_matches and webhook_url:
             for match in all_matches:
                 if match['type'] == 'starting':
-                    # Starting soon or just started alert
-                    if match.get('minutes_until', 0) > 0:
-                        alert_text = f"🎾 MATCH STARTING: {match['player1']} vs {match['player2']} in ~{match['minutes_until']} minutes"
-                        context_text = f"⏰ Starting in ~{match['minutes_until']} minutes"
-                    else:
-                        alert_text = f"🎾 MATCH STARTED: {match['player1']} vs {match['player2']} (1st set in progress)"
-                        context_text = "▶️ Match just started - 1st set in progress"
-                    
+                    # Starting soon alert
                     slack_message = {
-                        "text": alert_text,
+                        "text": f"🎾 MATCH STARTING: {match['player1']} vs {match['player2']} in ~{match['minutes_until']} minutes",
                         "blocks": [
                             {
                                 "type": "header",
                                 "text": {
                                     "type": "plain_text",
-                                    "text": "🎾 MATCH STARTING" if match.get('minutes_until', 0) > 0 else "🎾 MATCH STARTED",
+                                    "text": "🎾 MATCH STARTING SOON",
                                     "emoji": True
                                 }
                             },
@@ -267,7 +176,7 @@ jobs:
                                 "elements": [
                                     {
                                         "type": "mrkdwn",
-                                        "text": context_text
+                                        "text": f"⏰ Starting in ~{match['minutes_until']} minutes"
                                     }
                                 ]
                             }
