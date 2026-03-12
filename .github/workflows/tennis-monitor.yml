@@ -14,15 +14,50 @@ jobs:
     - name: Check for tennis matches
       run: |
         # Fetch tennis matches from The Odds API
-        # For Indian Wells (BNP Paribas Open), use specific tournament key
         API_KEY="${{ secrets.ODDS_API_KEY }}"
         
-        echo "Fetching ATP tennis matches..."
-        # Try Indian Wells specifically (bnp paribas open is a masters 1000 event)
-        response=$(curl -s "https://api.the-odds-api.com/v4/sports/tennis_atp_indian_wells/odds/?apiKey=$API_KEY&regions=us&markets=h2h")
+        echo "Getting list of available tennis tournaments..."
+        # Get all sports (this doesn't count against quota!)
+        sports_list=$(curl -s "https://api.the-odds-api.com/v4/sports/?apiKey=$API_KEY")
         
-        # Save to file for processing
-        echo "$response" > matches.json
+        # Filter for tennis tournaments
+        tennis_sports=$(echo "$sports_list" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+tennis = [s['key'] for s in data if s.get('group') == 'Tennis' and s.get('active') == True and 'atp' in s['key'].lower()]
+print(','.join(tennis))
+")
+        
+        echo "Active ATP tournaments: $tennis_sports"
+        
+        # Fetch matches from all active ATP tournaments
+        echo "[]" > all_matches.json
+        
+        IFS=',' read -ra TOURNAMENTS <<< "$tennis_sports"
+        for tournament in "${TOURNAMENTS[@]}"; do
+            if [ ! -z "$tournament" ]; then
+                echo "Fetching $tournament..."
+                curl -s "https://api.the-odds-api.com/v4/sports/$tournament/odds/?apiKey=$API_KEY&regions=us&markets=h2h" > temp.json
+                
+                # Append to all_matches (merge JSON arrays)
+                python3 -c "
+import json
+try:
+    with open('all_matches.json', 'r') as f:
+        all_matches = json.load(f)
+    with open('temp.json', 'r') as f:
+        new_matches = json.load(f)
+    if isinstance(new_matches, list):
+        all_matches.extend(new_matches)
+    with open('all_matches.json', 'w') as f:
+        json.dump(all_matches, f)
+except: pass
+"
+            fi
+        done
+        
+        # Use the combined matches file
+        mv all_matches.json matches.json
         
         # Create state file if it doesn't exist
         touch alerted_matches.txt
