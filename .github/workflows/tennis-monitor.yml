@@ -16,12 +16,21 @@ jobs:
         # Get today's date
         TODAY=$(date +%Y-%m-%d)
         
-        # Fetch SofaScore tennis events for today
-        # SofaScore API endpoint for tennis events
-        response=$(curl -s "https://www.sofascore.com/api/v1/sport/tennis/scheduled-events/$TODAY")
+        # Fetch SofaScore tennis live scores and scheduled matches
+        # Try multiple endpoints to get comprehensive data
+        echo "Fetching live matches..."
+        curl -s "https://www.sofascore.com/api/v1/sport/tennis/events/live" > live_matches.json
         
-        # Save to file for processing
-        echo "$response" > matches.json
+        echo "Fetching scheduled matches..."
+        curl -s "https://www.sofascore.com/api/v1/sport/tennis/scheduled-events/$TODAY" > scheduled_matches.json
+        
+        # Combine both responses
+        cat > matches.json << 'JSONEOF'
+        {
+          "live": $(cat live_matches.json),
+          "scheduled": $(cat scheduled_matches.json)
+        }
+        JSONEOF
         
         # Create state file if it doesn't exist
         touch alerted_matches.txt
@@ -38,29 +47,15 @@ jobs:
         with open('matches.json', 'r') as f:
             data = json.load(f)
         
-        # Read previously alerted matches
-        alerted_matches = set()
-        try:
-            with open('alerted_matches.txt', 'r') as f:
-                content = f.read().strip()
-                if content:
-                    alerted_matches = set(content.split(','))
-        except:
-            pass
+        # Combine live and scheduled events
+        all_events = []
+        if 'live' in data and 'events' in data['live']:
+            all_events.extend(data['live']['events'])
+        if 'scheduled' in data and 'events' in data['scheduled']:
+            all_events.extend(data['scheduled']['events'])
         
-        # Get current date for daily reset
-        current_date = datetime.now().strftime('%Y%m%d')
-        
-        # Filter out old alerts (from previous days)
-        alerted_matches = {m for m in alerted_matches if m.startswith(current_date)}
-        
-        # Check for matches starting soon and matches in 3rd set
-        starting_soon_matches = []
-        third_set_matches = []
-        
-        # Debug output
         print(f"\n📊 API Response Summary:")
-        print(f"Total events found: {len(data.get('events', []))}")
+        print(f"Total events found: {len(all_events)}")
         
         if 'events' in data and data['events']:
             # Filter for ATP Men's Singles matches only
