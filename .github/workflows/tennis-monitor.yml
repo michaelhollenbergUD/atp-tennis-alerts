@@ -13,25 +13,15 @@ jobs:
       
     - name: Check for tennis matches
       run: |
-        # Get today's date
-        TODAY=$(date +%Y-%m-%d)
+        # Fetch tennis matches from The Odds API
+        # Using tennis_atp for ATP Tour matches
+        API_KEY="${{ secrets.ODDS_API_KEY }}"
         
-        # Fetch SofaScore tennis data with proper headers to avoid blocking
-        echo "Fetching live matches..."
-        curl -s -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-             -H "Accept: application/json" \
-             "https://www.sofascore.com/api/v1/sport/tennis/events/live" > live_matches.json
+        echo "Fetching ATP tennis matches..."
+        response=$(curl -s "https://api.the-odds-api.com/v4/sports/tennis_atp/odds/?apiKey=$API_KEY&regions=us&markets=h2h")
         
-        echo "Fetching scheduled matches..."
-        curl -s -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-             -H "Accept: application/json" \
-             "https://www.sofascore.com/api/v1/sport/tennis/scheduled-events/$TODAY" > scheduled_matches.json
-        
-        # Also try getting today's events
-        echo "Fetching all today's matches..."
-        curl -s -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-             -H "Accept: application/json" \
-             "https://www.sofascore.com/api/v1/sport/tennis/events/$TODAY" > today_matches.json
+        # Save to file for processing
+        echo "$response" > matches.json
         
         # Create state file if it doesn't exist
         touch alerted_matches.txt
@@ -45,44 +35,8 @@ jobs:
         from datetime import datetime, timezone
         
         # Read the matches data
-        import json
-        import os
-        import urllib.request
-        import urllib.parse
-        from datetime import datetime, timezone
-        
-        # Read both JSON files
-        all_events = []
-        
-        try:
-            with open('live_matches.json', 'r') as f:
-                live_data = json.load(f)
-                if 'events' in live_data:
-                    all_events.extend(live_data['events'])
-                    print(f"Live matches: {len(live_data['events'])}")
-        except Exception as e:
-            print(f"No live matches data: {e}")
-        
-        try:
-            with open('scheduled_matches.json', 'r') as f:
-                scheduled_data = json.load(f)
-                if 'events' in scheduled_data:
-                    all_events.extend(scheduled_data['events'])
-                    print(f"Scheduled matches: {len(scheduled_data['events'])}")
-        except Exception as e:
-            print(f"No scheduled matches data: {e}")
-        
-        try:
-            with open('today_matches.json', 'r') as f:
-                today_data = json.load(f)
-                if 'events' in today_data:
-                    all_events.extend(today_data['events'])
-                    print(f"Today's matches: {len(today_data['events'])}")
-        except Exception as e:
-            print(f"No today matches data: {e}")
-        
-        print(f"\n📊 API Response Summary:")
-        print(f"Total events found: {len(all_events)}")
+        with open('matches.json', 'r') as f:
+            data = json.load(f)
         
         # Read previously alerted matches
         alerted_matches = set()
@@ -100,158 +54,106 @@ jobs:
         # Filter out old alerts (from previous days)
         alerted_matches = {m for m in alerted_matches if m.startswith(current_date)}
         
-        # Check for matches starting soon and matches in 3rd set
+        # Check for matches starting soon
         starting_soon_matches = []
-        third_set_matches = []
         
-        if all_events:
-            # Filter for ATP Men's Singles matches only
-            atp_matches = []
-            for event in all_events:
-                tournament = event.get('tournament', {})
-                category = tournament.get('category', {})
-                
-                # Check if it's ATP (not WTA, not doubles)
-                if category.get('slug') == 'atp-singles':
-                    atp_matches.append(event)
+        # Debug output
+        print(f"\n📊 API Response Summary:")
+        
+        # Check if we got an error
+        if isinstance(data, dict) and 'message' in data:
+            print(f"API Error: {data.get('message')}")
+            print(f"Remaining requests: {data.get('remaining', 'unknown')}")
+        elif isinstance(data, list):
+            print(f"Total matches found: {len(data)}")
             
-            print(f"ATP Singles matches found: {len(atp_matches)}")
-            
-            for event in atp_matches:
+            if data:
+                print(f"\nAll matches in response:")
+                for event in data:
+                    home_team = event.get('home_team', 'Unknown')
+                    away_team = event.get('away_team', 'Unknown')
+                    commence_time = event.get('commence_time', '')
+                    
+                    print(f"  - {home_team} vs {away_team} (Start: {commence_time})")
+        else:
+            print(f"Unexpected API response format")
+        
+        # Process matches
+        if isinstance(data, list):
+            for event in data:
                 try:
-                    match_id = str(event['id'])
-                    home_team = event.get('homeTeam', {})
-                    away_team = event.get('awayTeam', {})
+                    match_id = event.get('id', '')
+                    home_team = event.get('home_team', '')
+                    away_team = event.get('away_team', '')
+                    commence_time = event.get('commence_time', '')
                     
-                    player1 = home_team.get('name', 'Unknown')
-                    player2 = away_team.get('name', 'Unknown')
+                    if not match_id or not home_team or not away_team:
+                        continue
                     
-                    status = event.get('status', {})
-                    status_code = status.get('code', 0)
-                    status_type = status.get('type', '')
-                    
-                    # Status codes: 0=not started, 6=1st set, 7=2nd set, 8=3rd set, 100=finished
-                    # Get start time
-                    start_timestamp = event.get('startTimestamp', 0)
-                    
-                    print(f"\n  {player1} vs {player2}")
-                    print(f"    Status: {status_type} (code: {status_code})")
-                    
-                    # Create unique daily keys
+                    # Create unique daily key
                     starting_key = f"{current_date}_{match_id}_starting"
-                    third_set_key = f"{current_date}_{match_id}_thirdset"
                     
-                    # Check for matches starting soon (status 0 = not started)
-                    if status_code == 0 and start_timestamp > 0 and starting_key not in alerted_matches:
-                        current_time = datetime.now(timezone.utc).timestamp()
-                        minutes_until = int((start_timestamp - current_time) / 60)
-                        
-                        # Alert if starting in 0-20 minutes
-                        if 0 <= minutes_until <= 20:
-                            match_info = {
-                                'id': match_id,
-                                'key': starting_key,
-                                'player1': player1,
-                                'player2': player2,
-                                'minutes_until': minutes_until,
-                                'type': 'starting'
-                            }
-                            starting_soon_matches.append(match_info)
-                            alerted_matches.add(starting_key)
-                            print(f"    → Starting soon alert queued")
-                    
-                    # Check for matches in 3rd set (status 6=1st set, 7=2nd set, 8=3rd set)
-                    # Also check if status_type is "inprogress" and we're in set 3
-                    if status_code == 8 and third_set_key not in alerted_matches:
-                        # Get scores
-                        home_score = event.get('homeScore', {})
-                        away_score = event.get('awayScore', {})
-                        
-                        score1 = home_score.get('display', 'N/A')
-                        score2 = away_score.get('display', 'N/A')
-                        
-                        match_info = {
-                            'id': match_id,
-                            'key': third_set_key,
-                            'player1': player1,
-                            'player2': player2,
-                            'score1': score1,
-                            'score2': score2,
-                            'type': 'thirdset'
-                        }
-                        third_set_matches.append(match_info)
-                        alerted_matches.add(third_set_key)
-                        print(f"    → Third set alert queued")
-                        
+                    # Parse commence time and check if starting soon
+                    if commence_time and starting_key not in alerted_matches:
+                        try:
+                            match_start = datetime.fromisoformat(commence_time.replace('Z', '+00:00'))
+                            current_time_utc = datetime.now(timezone.utc)
+                            time_until_match = match_start - current_time_utc
+                            minutes_until = int(time_until_match.total_seconds() / 60)
+                            
+                            # Alert if starting in 0-20 minutes
+                            if 0 <= minutes_until <= 20:
+                                match_info = {
+                                    'id': match_id,
+                                    'key': starting_key,
+                                    'player1': home_team,
+                                    'player2': away_team,
+                                    'minutes_until': minutes_until,
+                                    'type': 'starting'
+                                }
+                                starting_soon_matches.append(match_info)
+                                alerted_matches.add(starting_key)
+                                print(f"    → Starting soon alert queued for {home_team} vs {away_team}")
+                        except:
+                            pass
+                            
                 except Exception as e:
                     print(f"  Error processing match: {e}")
         
         # Send notifications
         webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
         
-        all_matches = starting_soon_matches + third_set_matches
-        
-        if all_matches and webhook_url:
-            for match in all_matches:
-                if match['type'] == 'starting':
-                    # Starting soon alert
-                    slack_message = {
-                        "text": f"🎾 MATCH STARTING: {match['player1']} vs {match['player2']} in ~{match['minutes_until']} minutes",
-                        "blocks": [
-                            {
-                                "type": "header",
-                                "text": {
-                                    "type": "plain_text",
-                                    "text": "🎾 MATCH STARTING SOON",
-                                    "emoji": True
-                                }
-                            },
-                            {
-                                "type": "section",
-                                "text": {
+        if starting_soon_matches and webhook_url:
+            for match in starting_soon_matches:
+                slack_message = {
+                    "text": f"🎾 MATCH STARTING: {match['player1']} vs {match['player2']} in ~{match['minutes_until']} minutes",
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "🎾 MATCH STARTING SOON",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*{match['player1']}* vs *{match['player2']}*"
+                            }
+                        },
+                        {
+                            "type": "context",
+                            "elements": [
+                                {
                                     "type": "mrkdwn",
-                                    "text": f"*{match['player1']}* vs *{match['player2']}*"
+                                    "text": f"⏰ Starting in ~{match['minutes_until']} minutes"
                                 }
-                            },
-                            {
-                                "type": "context",
-                                "elements": [
-                                    {
-                                        "type": "mrkdwn",
-                                        "text": f"⏰ Starting in ~{match['minutes_until']} minutes"
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                else:
-                    # 3rd set alert
-                    slack_message = {
-                        "text": f"🎾 THIRD SET: {match['player1']} vs {match['player2']}",
-                        "blocks": [
-                            {
-                                "type": "header",
-                                "text": {
-                                    "type": "plain_text",
-                                    "text": "🎾 THIRD SET",
-                                    "emoji": True
-                                }
-                            },
-                            {
-                                "type": "section",
-                                "fields": [
-                                    {
-                                        "type": "mrkdwn",
-                                        "text": f"*{match['player1']}*\n{match['score1']}"
-                                    },
-                                    {
-                                        "type": "mrkdwn",
-                                        "text": f"*{match['player2']}*\n{match['score2']}"
-                                    }
-                                ]
-                            }
-                        ]
-                    }
+                            ]
+                        }
+                    ]
+                }
                 
                 # Send to Slack
                 req = urllib.request.Request(
@@ -262,7 +164,7 @@ jobs:
                 
                 try:
                     with urllib.request.urlopen(req) as response:
-                        print(f"✓ Sent notification: {match['player1']} vs {match['player2']} ({match['type']})")
+                        print(f"✓ Sent notification: {match['player1']} vs {match['player2']}")
                 except Exception as e:
                     print(f"✗ Error sending notification: {e}")
         else:
