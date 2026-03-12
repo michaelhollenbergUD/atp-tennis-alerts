@@ -65,29 +65,26 @@ jobs:
             print(f"\nAll matches in response:")
             for idx, event in enumerate(data['events']):
                 try:
-                    # Tennis API uses 'name' field for match info (e.g., "Player A vs Player B")
+                    # Show all string fields that might have player names
                     match_name = event.get('name', '')
                     short_name = event.get('shortName', '')
                     status = event['status']['type']['name']
                     status_detail = event['status']['type']['detail']
                     period = event['status'].get('period', 0)
                     
-                    # Parse player names from the name field
-                    if ' vs ' in match_name:
-                        players = match_name.split(' vs ')
-                        if len(players) == 2:
-                            player1 = players[0].strip()
-                            player2 = players[1].strip()
-                            print(f"  ✓ {player1} vs {player2} [{status_detail}] (Status: {status}, Period: {period})")
-                        else:
-                            print(f"  ✗ Could not parse players from: {match_name}")
-                    else:
-                        print(f"  ✗ Match name format unexpected: {match_name}")
+                    print(f"\n  Match {idx + 1}:")
+                    print(f"    name: {match_name}")
+                    print(f"    shortName: {short_name}")
+                    print(f"    status: {status}")
+                    print(f"    status_detail: {status_detail}")
+                    print(f"    period: {period}")
+                    
+                    # Check if there's a competitions array (like basketball)
+                    if 'competitions' in event:
+                        print(f"    HAS competitions array!")
                         
                 except Exception as e:
                     print(f"  ✗ Error parsing match: {e}")
-                    import traceback
-                    print(f"    {traceback.format_exc()}")
         
         if 'events' in data and data['events']:
             for event in data['events']:
