@@ -17,20 +17,11 @@ jobs:
         TODAY=$(date +%Y-%m-%d)
         
         # Fetch SofaScore tennis live scores and scheduled matches
-        # Try multiple endpoints to get comprehensive data
         echo "Fetching live matches..."
         curl -s "https://www.sofascore.com/api/v1/sport/tennis/events/live" > live_matches.json
         
         echo "Fetching scheduled matches..."
         curl -s "https://www.sofascore.com/api/v1/sport/tennis/scheduled-events/$TODAY" > scheduled_matches.json
-        
-        # Combine both responses
-        cat > matches.json << 'JSONEOF'
-        {
-          "live": $(cat live_matches.json),
-          "scheduled": $(cat scheduled_matches.json)
-        }
-        JSONEOF
         
         # Create state file if it doesn't exist
         touch alerted_matches.txt
@@ -44,23 +35,58 @@ jobs:
         from datetime import datetime, timezone
         
         # Read the matches data
-        with open('matches.json', 'r') as f:
-            data = json.load(f)
+        import json
+        import os
+        import urllib.request
+        import urllib.parse
+        from datetime import datetime, timezone
         
-        # Combine live and scheduled events
+        # Read both JSON files
         all_events = []
-        if 'live' in data and 'events' in data['live']:
-            all_events.extend(data['live']['events'])
-        if 'scheduled' in data and 'events' in data['scheduled']:
-            all_events.extend(data['scheduled']['events'])
+        
+        try:
+            with open('live_matches.json', 'r') as f:
+                live_data = json.load(f)
+                if 'events' in live_data:
+                    all_events.extend(live_data['events'])
+        except:
+            print("No live matches data")
+        
+        try:
+            with open('scheduled_matches.json', 'r') as f:
+                scheduled_data = json.load(f)
+                if 'events' in scheduled_data:
+                    all_events.extend(scheduled_data['events'])
+        except:
+            print("No scheduled matches data")
         
         print(f"\n📊 API Response Summary:")
         print(f"Total events found: {len(all_events)}")
         
-        if 'events' in data and data['events']:
+        # Read previously alerted matches
+        alerted_matches = set()
+        try:
+            with open('alerted_matches.txt', 'r') as f:
+                content = f.read().strip()
+                if content:
+                    alerted_matches = set(content.split(','))
+        except:
+            pass
+        
+        # Get current date for daily reset
+        current_date = datetime.now().strftime('%Y%m%d')
+        
+        # Filter out old alerts (from previous days)
+        alerted_matches = {m for m in alerted_matches if m.startswith(current_date)}
+        
+        # Check for matches starting soon and matches in 3rd set
+        starting_soon_matches = []
+        third_set_matches = []
+        
+        if all_events:
             # Filter for ATP Men's Singles matches only
             atp_matches = []
-            for event in data['events']:
+            for event in all_events:
                 tournament = event.get('tournament', {})
                 category = tournament.get('category', {})
                 
