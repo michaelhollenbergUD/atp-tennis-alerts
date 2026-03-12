@@ -14,11 +14,12 @@ jobs:
     - name: Check for tennis matches
       run: |
         # Fetch tennis matches from The Odds API
-        # Using tennis_atp for ATP Tour matches
+        # For Indian Wells (BNP Paribas Open), use specific tournament key
         API_KEY="${{ secrets.ODDS_API_KEY }}"
         
         echo "Fetching ATP tennis matches..."
-        response=$(curl -s "https://api.the-odds-api.com/v4/sports/tennis_atp/odds/?apiKey=$API_KEY&regions=us&markets=h2h")
+        # Try Indian Wells specifically (bnp paribas open is a masters 1000 event)
+        response=$(curl -s "https://api.the-odds-api.com/v4/sports/tennis_atp_indian_wells/odds/?apiKey=$API_KEY&regions=us&markets=h2h")
         
         # Save to file for processing
         echo "$response" > matches.json
