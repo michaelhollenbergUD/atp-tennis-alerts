@@ -16,12 +16,22 @@ jobs:
         # Get today's date
         TODAY=$(date +%Y-%m-%d)
         
-        # Fetch SofaScore tennis live scores and scheduled matches
+        # Fetch SofaScore tennis data with proper headers to avoid blocking
         echo "Fetching live matches..."
-        curl -s "https://www.sofascore.com/api/v1/sport/tennis/events/live" > live_matches.json
+        curl -s -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+             -H "Accept: application/json" \
+             "https://www.sofascore.com/api/v1/sport/tennis/events/live" > live_matches.json
         
         echo "Fetching scheduled matches..."
-        curl -s "https://www.sofascore.com/api/v1/sport/tennis/scheduled-events/$TODAY" > scheduled_matches.json
+        curl -s -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+             -H "Accept: application/json" \
+             "https://www.sofascore.com/api/v1/sport/tennis/scheduled-events/$TODAY" > scheduled_matches.json
+        
+        # Also try getting today's events
+        echo "Fetching all today's matches..."
+        curl -s -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+             -H "Accept: application/json" \
+             "https://www.sofascore.com/api/v1/sport/tennis/events/$TODAY" > today_matches.json
         
         # Create state file if it doesn't exist
         touch alerted_matches.txt
@@ -49,16 +59,27 @@ jobs:
                 live_data = json.load(f)
                 if 'events' in live_data:
                     all_events.extend(live_data['events'])
-        except:
-            print("No live matches data")
+                    print(f"Live matches: {len(live_data['events'])}")
+        except Exception as e:
+            print(f"No live matches data: {e}")
         
         try:
             with open('scheduled_matches.json', 'r') as f:
                 scheduled_data = json.load(f)
                 if 'events' in scheduled_data:
                     all_events.extend(scheduled_data['events'])
-        except:
-            print("No scheduled matches data")
+                    print(f"Scheduled matches: {len(scheduled_data['events'])}")
+        except Exception as e:
+            print(f"No scheduled matches data: {e}")
+        
+        try:
+            with open('today_matches.json', 'r') as f:
+                today_data = json.load(f)
+                if 'events' in today_data:
+                    all_events.extend(today_data['events'])
+                    print(f"Today's matches: {len(today_data['events'])}")
+        except Exception as e:
+            print(f"No today matches data: {e}")
         
         print(f"\n📊 API Response Summary:")
         print(f"Total events found: {len(all_events)}")
