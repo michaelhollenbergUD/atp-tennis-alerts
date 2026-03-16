@@ -16,8 +16,8 @@ jobs:
         # Fetch tennis matches from The Odds API
         API_KEY="${{ secrets.ODDS_API_KEY }}"
         
-        echo "Fetching ATP tennis matches for Indian Wells..."
-        curl -s "https://api.the-odds-api.com/v4/sports/tennis_atp_indian_wells/odds/?apiKey=$API_KEY&regions=us&markets=h2h" > matches.json
+        echo "Fetching ATP tennis matches for Miami Open..."
+        curl -s "https://api.the-odds-api.com/v4/sports/tennis_atp_miami/odds/?apiKey=$API_KEY&regions=us&markets=h2h" > matches.json
         
         # Create state file if it doesn't exist
         touch alerted_matches.txt
