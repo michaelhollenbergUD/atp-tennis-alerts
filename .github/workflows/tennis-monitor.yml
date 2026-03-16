@@ -16,8 +16,21 @@ jobs:
         # Fetch tennis matches from The Odds API
         API_KEY="${{ secrets.ODDS_API_KEY }}"
         
+        # First, get list of all sports to find the correct Miami key
+        echo "Getting list of available sports..."
+        curl -s "https://api.the-odds-api.com/v4/sports/?apiKey=$API_KEY&all=true" > sports_list.json
+        
+        echo "Available tennis sports:"
+        cat sports_list.json | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for sport in data:
+    if 'tennis' in sport.get('key', '').lower():
+        print(f\"  {sport['key']} - {sport.get('title', 'N/A')} (active: {sport.get('active', False)})\")
+"
+        
         echo "Fetching ATP tennis matches for Miami Open..."
-        curl -s "https://api.the-odds-api.com/v4/sports/tennis_atp_miami/odds/?apiKey=$API_KEY&regions=us&markets=h2h" > matches.json
+        curl -s "https://api.the-odds-api.com/v4/sports/tennis_atp_miami_open/odds/?apiKey=$API_KEY&regions=us&markets=h2h" > matches.json
         
         # Create state file if it doesn't exist
         touch alerted_matches.txt
